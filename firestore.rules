@@ -1,0 +1,410 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users/{userId}
+    // Document ID: userId (matches Firebase Auth UID)
+    // Fields:
+    //   - uid: string (required, equals userId and request.auth.uid, immutable)
+    //   - fullName: string (required, length > 0)
+    //   - email: string (required)
+    //   - phone: string | null (optional)
+    //   - photoURL: string | null (optional)
+    //   - provider: string (required, 'password' | 'google')
+    //   - role: string (required, 'customer', immutable)
+    //   - emailVerified: bool (required, matches auth token)
+    //   - createdAt: timestamp (required, immutable)
+    //   - updatedAt: timestamp (required)
+    //
+    // Collection: users/{userId}/addresses/{addressId}
+    // Document ID: addressId (auto-generated or custom string)
+    // Fields:
+    //   - fullName: string (required, 1-100 chars)
+    //   - phone: string (required, 10-15 chars)
+    //   - houseStreet: string (required, 1-250 chars)
+    //   - areaLocality: string (optional, 0-250 chars)
+    //   - city: string (required, 1-100 chars)
+    //   - state: string (required, 1-100 chars)
+    //   - pincode: string (required, 4-10 chars)
+    //   - addressType: string (required, 'Home' | 'Work' | 'Other')
+    //   - isDefault: bool (required)
+    //   - id: string (optional, matches addressId if present)
+    //   - createdAt: timestamp (required, immutable)
+    //   - updatedAt: timestamp (required)
+    //
+    // Collection: users/{userId}/wishlist/{productId}
+    // Document ID: productId (matches productId field)
+    // Fields:
+    //   - productId: string (required, 1-100 chars, equals productId document ID)
+    //   - productName: string (required, 1-200 chars)
+    //   - productImage: string (required, 0-2500 chars)
+    //   - priceAtSave: number (required, >= 0, <= 10,000,000)
+    //   - addedAt: timestamp (required)
+    //   - category: string (optional, 0-100 chars)
+    //
+    // Collection: orders/{orderId}
+    // Document ID: orderId (e.g. VG-YYYYMMDD-XXXXXX or valid string)
+    // Fields:
+    //   - orderId: string (required, 5-64 chars, matches document path if VG- format)
+    //   - userId: string (required, equals request.auth.uid, immutable)
+    //   - items: list (required, 1-50 items, cart product snapshots)
+    //   - subtotal: number (required, > 0, <= 10,000,000)
+    //   - deliveryCharge: number (required, >= 0, <= 100,000)
+    //   - totalAmount: number (required, > 0, <= 10,000,000)
+    //   - customerDetails: map (required, keys: fullName [2-100 chars], email [5-100 chars], phone [10-15 chars])
+    //   - shippingAddress: map (required, keys: addressLine [5-250 chars], city [2-100 chars], state [2-100 chars], pincode [4-10 chars])
+    //   - orderStatus: string (required, strictly 'placed' on client creation)
+    //   - createdAt: timestamp (required, immutable)
+    //   - updatedAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    // Customer profile collection: users/{userId}
+    match /users/{userId} {
+      function hasValidFields() {
+        let allowed = ['uid', 'fullName', 'email', 'phone', 'photoURL', 'provider', 'role', 'emailVerified', 'createdAt', 'updatedAt'];
+        return request.resource.data.keys().hasOnly(allowed);
+      }
+
+      function isValidCreate() {
+        let data = request.resource.data;
+        return hasValidFields()
+          && data.uid == request.auth.uid
+          && data.email is string
+          && data.fullName is string
+          && data.fullName.size() > 0
+          && data.fullName.size() <= 100
+          && data.role == 'customer'
+          && (data.provider == 'password' || data.provider == 'google')
+          && (!('phone' in data) || data.phone == null || (data.phone is string && data.phone.size() <= 30))
+          && (!('photoURL' in data) || data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 2000))
+          && data.emailVerified is bool
+          // emailVerified can be false, or true if verified by auth token or Google OAuth sign-in provider
+          && (
+               data.emailVerified == false ||
+               ('email_verified' in request.auth.token && request.auth.token.email_verified == true) ||
+               (data.provider == 'google' && 'firebase' in request.auth.token && request.auth.token.firebase.sign_in_provider == 'google.com')
+             )
+          && data.createdAt is timestamp
+          && data.updatedAt is timestamp;
+      }
+
+      function isValidUpdate() {
+        let data = request.resource.data;
+        let prev = resource.data;
+        return hasValidFields()
+          // UID cannot be altered
+          && data.uid == prev.uid
+          // Role cannot be changed or escalated to admin
+          && data.role == prev.role
+          && data.role == 'customer'
+          // Creation timestamp cannot be altered
+          && data.createdAt == prev.createdAt
+          && (!('fullName' in data) || (data.fullName is string && data.fullName.size() > 0 && data.fullName.size() <= 100))
+          && (!('email' in data) || (data.email is string && data.email.size() <= 100))
+          && (!('phone' in data) || data.phone == null || (data.phone is string && data.phone.size() <= 30))
+          && (!('photoURL' in data) || data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 2000))
+          // emailVerified cannot be spoofed to true unless Firebase auth token or Google provider confirms verification
+          && data.emailVerified is bool
+          && (
+               data.emailVerified == prev.emailVerified ||
+               ('email_verified' in request.auth.token && request.auth.token.email_verified == true) ||
+               (data.provider == 'google' && 'firebase' in request.auth.token && request.auth.token.firebase.sign_in_provider == 'google.com')
+             )
+          && data.updatedAt is timestamp;
+      }
+
+      // Only authenticated users can read their own profile
+      allow read: if isOwner(userId);
+
+      // Only authenticated user can create their own profile with validated customer fields
+      allow create: if isOwner(userId) && isValidCreate();
+
+      // Only authenticated user can update their own profile, without modifying UID, role, or createdAt
+      allow update: if isOwner(userId) && isValidUpdate();
+
+      // Delete forbidden to maintain customer records
+      allow delete: if false;
+
+      // Delivery addresses subcollection: users/{userId}/addresses/{addressId}
+      match /addresses/{addressId} {
+
+        function hasValidAddressFields() {
+          let allowed = [
+            'fullName',
+            'phone',
+            'houseStreet',
+            'areaLocality',
+            'city',
+            'state',
+            'pincode',
+            'addressType',
+            'isDefault',
+            'id',
+            'createdAt',
+            'updatedAt'
+          ];
+          let required = [
+            'fullName',
+            'phone',
+            'houseStreet',
+            'city',
+            'state',
+            'pincode',
+            'addressType',
+            'isDefault',
+            'createdAt',
+            'updatedAt'
+          ];
+          return request.resource.data.keys().hasAll(required)
+            && request.resource.data.keys().hasOnly(allowed);
+        }
+
+        function isValidAddress(data, addrId) {
+          return hasValidAddressFields()
+            && data.fullName is string
+            && data.fullName.size() >= 1
+            && data.fullName.size() <= 100
+            && data.phone is string
+            && data.phone.size() >= 10
+            && data.phone.size() <= 15
+            && data.houseStreet is string
+            && data.houseStreet.size() >= 1
+            && data.houseStreet.size() <= 250
+            && (!('areaLocality' in data) || (data.areaLocality is string && data.areaLocality.size() <= 250))
+            && data.city is string
+            && data.city.size() >= 1
+            && data.city.size() <= 100
+            && data.state is string
+            && data.state.size() >= 1
+            && data.state.size() <= 100
+            && data.pincode is string
+            && data.pincode.size() >= 4
+            && data.pincode.size() <= 10
+            && data.addressType is string
+            && data.addressType in ['Home', 'Work', 'Other']
+            && data.isDefault is bool
+            && (!('id' in data) || (data.id is string && data.id == addrId))
+            && data.createdAt is timestamp
+            && data.updatedAt is timestamp;
+        }
+
+        function isValidAddressCreate(addrId) {
+          let data = request.resource.data;
+          return isValidAddress(data, addrId);
+        }
+
+        function isValidAddressUpdate(addrId) {
+          let data = request.resource.data;
+          let prev = resource.data;
+          return isValidAddress(data, addrId)
+            // Cannot tamper with createdAt timestamp
+            && data.createdAt == prev.createdAt
+            // id field if present cannot be changed
+            && (!('id' in prev) || data.id == prev.id);
+        }
+
+        // Only authenticated user can read their own addresses
+        allow read: if isOwner(userId);
+
+        // Only authenticated user can create an address under their own profile
+        allow create: if isOwner(userId) && isValidAddressCreate(addressId);
+
+        // Only authenticated user can update their own address, maintaining schema and createdAt
+        allow update: if isOwner(userId) && isValidAddressUpdate(addressId);
+
+        // Only authenticated user can delete their own address
+        allow delete: if isOwner(userId);
+      }
+
+      // Wishlist subcollection: users/{userId}/wishlist/{productId}
+      match /wishlist/{productId} {
+
+        function hasValidWishlistFields() {
+          let allowed = [
+            'productId',
+            'productName',
+            'productImage',
+            'priceAtSave',
+            'addedAt',
+            'category'
+          ];
+          let required = [
+            'productId',
+            'productName',
+            'productImage',
+            'priceAtSave',
+            'addedAt'
+          ];
+          return request.resource.data.keys().hasAll(required)
+            && request.resource.data.keys().hasOnly(allowed);
+        }
+
+        function isValidWishlist(data, prodId) {
+          return hasValidWishlistFields()
+            && data.productId is string
+            && data.productId == prodId
+            && data.productId.size() >= 1
+            && data.productId.size() <= 100
+            && data.productName is string
+            && data.productName.size() >= 1
+            && data.productName.size() <= 200
+            && data.productImage is string
+            && data.productImage.size() <= 2500
+            && data.priceAtSave is number
+            && data.priceAtSave >= 0
+            && data.priceAtSave <= 10000000
+            && data.addedAt is timestamp
+            && (!('category' in data) || (data.category is string && data.category.size() <= 100));
+        }
+
+        function isValidWishlistCreate(prodId) {
+          let data = request.resource.data;
+          return isValidWishlist(data, prodId);
+        }
+
+        function isValidWishlistUpdate(prodId) {
+          let data = request.resource.data;
+          let prev = resource.data;
+          return isValidWishlist(data, prodId)
+            // Cannot tamper with productId
+            && data.productId == prev.productId;
+        }
+
+        // Only authenticated user can read their own wishlist items
+        allow read: if isOwner(userId);
+
+        // Only authenticated user can create their own wishlist items
+        allow create: if isOwner(userId) && isValidWishlistCreate(productId);
+
+        // Only authenticated user can update their own wishlist items
+        allow update: if isOwner(userId) && isValidWishlistUpdate(productId);
+
+        // Only authenticated user can delete their own wishlist items
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    // Customer orders collection: orders/{orderId}
+    match /orders/{orderId} {
+
+      function hasValidOrderFields() {
+        let allowed = [
+          'orderId',
+          'userId',
+          'items',
+          'subtotal',
+          'deliveryCharge',
+          'totalAmount',
+          'customerDetails',
+          'shippingAddress',
+          'orderStatus',
+          'createdAt',
+          'updatedAt'
+        ];
+        return request.resource.data.keys().hasAll(allowed)
+          && request.resource.data.keys().hasOnly(allowed)
+          && !request.resource.data.keys().hasAny(['paymentMethod', 'paymentStatus', 'adminNotes', 'paymentVerifiedByAdmin', 'overrideDiscount']);
+      }
+
+      function isValidCustomerDetails(details) {
+        let allowed = ['fullName', 'email', 'phone'];
+        return details is map
+          && details.keys().hasAll(allowed)
+          && details.keys().hasOnly(allowed)
+          && details.fullName is string
+          && details.fullName.size() >= 2
+          && details.fullName.size() <= 100
+          && details.email is string
+          && details.email.size() >= 5
+          && details.email.size() <= 100
+          && details.phone is string
+          && details.phone.size() >= 10
+          && details.phone.size() <= 15;
+      }
+
+      function isValidShippingAddress(addr) {
+        let allowed = ['addressLine', 'city', 'state', 'pincode'];
+        return addr is map
+          && addr.keys().hasAll(allowed)
+          && addr.keys().hasOnly(allowed)
+          && addr.addressLine is string
+          && addr.addressLine.size() >= 5
+          && addr.addressLine.size() <= 250
+          && addr.city is string
+          && addr.city.size() >= 2
+          && addr.city.size() <= 100
+          && addr.state is string
+          && addr.state.size() >= 2
+          && addr.state.size() <= 100
+          && addr.pincode is string
+          && addr.pincode.size() >= 4
+          && addr.pincode.size() <= 10;
+      }
+
+      function isValidOrderCreate() {
+        let data = request.resource.data;
+        return hasValidOrderFields()
+          // User binding: Order userId must strictly match the authenticated user
+          && data.userId == request.auth.uid
+          // Document ID should match orderId if applicable, or orderId field must be a valid string
+          && data.orderId is string
+          && data.orderId.size() >= 5
+          && data.orderId.size() <= 64
+          && (data.orderId == orderId || !orderId.matches('^VG-.*'))
+          // Cart items: Must be a non-empty list within DoS size bounds
+          && data.items is list
+          && data.items.size() > 0
+          && data.items.size() <= 50
+          // Financial amounts: Numbers greater than zero with realistic maximum bounds
+          && data.subtotal is number
+          && data.subtotal > 0
+          && data.subtotal <= 10000000
+          && data.deliveryCharge is number
+          && data.deliveryCharge >= 0
+          && data.deliveryCharge <= 100000
+          && data.totalAmount is number
+          && data.totalAmount > 0
+          && data.totalAmount <= 10000000
+          // Customer details and shipping address maps
+          && isValidCustomerDetails(data.customerDetails)
+          && isValidShippingAddress(data.shippingAddress)
+          // Order status: Client can ONLY create orders with 'placed' status (cannot forge 'delivered', 'shipped', etc.)
+          && data.orderStatus == 'placed'
+          // Timestamps must be valid Firestore timestamp objects
+          && data.createdAt is timestamp
+          && data.updatedAt is timestamp;
+      }
+
+      // READ: Allow authenticated owner to get their order or list orders matching their UID (safe for empty sets and existing docs)
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+
+      // CREATE: Authenticated users can place orders strictly matching their UID and schema
+      allow create: if isAuthenticated() && isValidOrderCreate();
+
+      // UPDATE: Clients cannot modify orders once placed (protecting orderStatus, totalAmount, userId, items)
+      allow update: if false;
+
+      // DELETE: Forbidden to ensure audit integrity and financial record retention
+      allow delete: if false;
+    }
+
+    // Default deny for all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

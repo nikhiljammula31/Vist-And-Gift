@@ -23,3 +23,18 @@ dist-ssr
 *.sln
 *.sw?
 .vercel
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Firebase private credentials
+serviceAccountKey.json
+*-firebase-adminsdk-*.json
+
+# Dependencies and build
+node_modules/
+dist/
+dist-ssr/

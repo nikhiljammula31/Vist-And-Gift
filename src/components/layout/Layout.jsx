@@ -5,10 +5,10 @@ import CustomCursor from '../common/CustomCursor';
 import ScrollProgress from '../common/ScrollProgress';
 import GiftBoxTransition from '../common/GiftBoxTransition';
 import QuoteModal from '../common/QuoteModal';
+import AuthRequiredModal from '../common/AuthRequiredModal';
 import { useEffect } from 'react';
 import Lenis from '@studio-freight/lenis';
 import { AnimatePresence, motion } from 'framer-motion';
-import { QuoteProvider } from '../../context/QuoteContext';
 
 const Layout = () => {
   const location = useLocation();
@@ -105,7 +105,7 @@ const Layout = () => {
   const currentVariants = isServicesRoute ? premiumVariants : standardVariants;
 
   return (
-    <QuoteProvider>
+    <>
       <CustomCursor />
       <ScrollProgress />
       <Navbar />
@@ -133,7 +133,8 @@ const Layout = () => {
       
       <Footer />
       <QuoteModal />
-    </QuoteProvider>
+      <AuthRequiredModal />
+    </>
   );
 };
 

@@ -13,13 +13,18 @@ import HeroCardStack from '../components/ui/HeroCardStack';
 import HeroGiftBoxes from '../components/ui/HeroGiftBoxes';
 import { staggerContainer, fadeInUp, slideInLeft } from '../utils/animations';
 import { useQuote } from '../context/QuoteContext';
+import { useAuth } from '../context/AuthContext';
 
 gsap.registerPlugin(ScrollTrigger);
 
 const Home = () => {
   const navigate = useNavigate();
   const { openQuoteModal } = useQuote();
+  const { currentUser, isEmailVerified, loading } = useAuth();
   const heroRef = useRef(null);
+
+  // Authenticated and verified customer status
+  const isAuthedAndVerified = Boolean(!loading && currentUser && isEmailVerified);
   const { scrollYProgress } = useScroll({
     target: heroRef,
     offset: ["start start", "end start"]
@@ -107,8 +112,14 @@ const Home = () => {
                 Designed for those who appreciate true luxury.
               </motion.p>
               <motion.div variants={fadeInUp} className="flex flex-wrap gap-4">
-                <PremiumButton variant="gradient" onClick={() => navigate('/services')}>Explore Services</PremiumButton>
-                <PremiumButton variant="primary" onClick={() => navigate('/shop')}>Shop Gifts</PremiumButton>
+                <PremiumButton variant="gradient" onClick={() => navigate('/services')}>
+                  Explore Services
+                </PremiumButton>
+                {isAuthedAndVerified && (
+                  <PremiumButton variant="primary" onClick={() => navigate('/shop')}>
+                    Shop Gifts
+                  </PremiumButton>
+                )}
               </motion.div>
             </motion.div>
 
@@ -234,9 +245,11 @@ const Home = () => {
             <p className="font-body text-lg mb-10 opacity-90">
               Get in touch with us today for a free quote on bulk orders, custom designs, and corporate gifting solutions.
             </p>
-            <PremiumButton variant="primary" className="bg-white text-accent hover:text-white px-10 py-5 text-lg shadow-2xl" onClick={openQuoteModal}>
-              Request Free Quote
-            </PremiumButton>
+            {isAuthedAndVerified && (
+              <PremiumButton variant="primary" className="bg-white text-accent hover:text-white px-10 py-5 text-lg shadow-2xl" onClick={openQuoteModal}>
+                Request Free Quote
+              </PremiumButton>
+            )}
           </div>
         </div>
       </section>

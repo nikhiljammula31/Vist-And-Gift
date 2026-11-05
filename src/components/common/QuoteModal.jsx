@@ -5,9 +5,10 @@ import PremiumButton from './PremiumButton';
 import { FiX, FiCheckCircle } from 'react-icons/fi';
 
 const QuoteModal = () => {
-  const { isQuoteModalOpen, closeQuoteModal } = useQuote();
+  const { isQuoteModalOpen, closeQuoteModal, quoteFormData, setQuoteFormData } = useQuote();
   const [submitted, setSubmitted] = useState(false);
-  const [formData, setFormData] = useState({
+
+  const formData = quoteFormData || {
     name: '',
     phone: '',
     email: '',
@@ -15,10 +16,10 @@ const QuoteModal = () => {
     requirement: 'Visiting Cards',
     quantity: '',
     message: ''
-  });
+  };
 
   const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+    setQuoteFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
   const handleSubmit = (e) => {
@@ -27,7 +28,7 @@ const QuoteModal = () => {
     setTimeout(() => {
       setSubmitted(false);
       closeQuoteModal();
-      setFormData({
+      setQuoteFormData({
         name: '',
         phone: '',
         email: '',
