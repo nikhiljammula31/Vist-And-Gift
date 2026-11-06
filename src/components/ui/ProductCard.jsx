@@ -8,7 +8,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useAuthModal } from '../../context/AuthModalContext';
 import { useWishlist } from '../../context/WishlistContext';
 
-const ProductCard = React.memo(({ id, name, price, rating, image, category }) => {
+const ProductCard = React.memo(({ id, name, price, rating, image, category, available = true }) => {
   const navigate = useNavigate();
   const { addToCart } = useCart();
   const { currentUser } = useAuth();
@@ -16,9 +16,11 @@ const ProductCard = React.memo(({ id, name, price, rating, image, category }) =>
   const { isInWishlist, toggleWishlist } = useWishlist();
 
   const isSaved = isInWishlist(id);
+  const isAvailable = available !== false;
 
   const handleAddToCart = () => {
-    const product = { id, name, price, image };
+    if (!isAvailable) return;
+    const product = { id, name, price, image, available: isAvailable };
     if (!currentUser) {
       openAuthModal({
         title: 'Sign in to continue!',
@@ -68,17 +70,23 @@ const ProductCard = React.memo(({ id, name, price, rating, image, category }) =>
           />
 
           {/* Quick View Button: Floating top-left, clean and subtle */}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              navigate(`/product/${id}`);
-            }}
-            title="View Product Details"
-            className="absolute top-3 left-3 z-10 w-9 h-9 rounded-full bg-white/90 hover:bg-white text-secondary-dark hover:text-accent shadow-sm flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 cursor-pointer border border-pink-100/60"
-          >
-            <FiEye className="w-4 h-4" />
-          </button>
+          {isAvailable ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(`/product/${id}`);
+              }}
+              title="View Product Details"
+              className="absolute top-3 left-3 z-10 w-9 h-9 rounded-full bg-white/90 hover:bg-white text-secondary-dark hover:text-accent shadow-sm flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 cursor-pointer border border-pink-100/60"
+            >
+              <FiEye className="w-4 h-4" />
+            </button>
+          ) : (
+            <span className="absolute top-3 left-3 z-10 bg-gray-900/80 backdrop-blur-xs text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full shadow-xs">
+              Out of Stock
+            </span>
+          )}
 
           {/* Account-Only Wishlist Button: Floating top-right, visible ONLY for logged-in users */}
           {currentUser && (
@@ -138,17 +146,27 @@ const ProductCard = React.memo(({ id, name, price, rating, image, category }) =>
         </div>
       </div>
 
-      {/* Add to Cart Button: White/transparent, soft pink border, dark text, shopping cart icon */}
+      {/* Add to Cart Button */}
       <div className="px-1 pt-1 pb-1">
-        <motion.button
-          whileHover={{ scale: 1.01, y: -1 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={handleAddToCart}
-          className="w-full py-3 px-4 rounded-2xl bg-white hover:bg-[#FDE4EA]/70 border border-[#F8B8C8] hover:border-accent-dark font-body text-sm font-semibold text-secondary-dark flex items-center justify-center gap-2 transition-all duration-300 shadow-[0_2px_10px_rgba(248,184,200,0.15)] hover:shadow-[0_6px_20px_rgba(248,184,200,0.3)] cursor-pointer"
-        >
-          <FiShoppingCart className="w-4 h-4 text-secondary-dark" />
-          <span>Add to Cart</span>
-        </motion.button>
+        {isAvailable ? (
+          <motion.button
+            whileHover={{ scale: 1.01, y: -1 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={handleAddToCart}
+            className="w-full py-3 px-4 rounded-2xl bg-white hover:bg-[#FDE4EA]/70 border border-[#F8B8C8] hover:border-accent-dark font-body text-sm font-semibold text-secondary-dark flex items-center justify-center gap-2 transition-all duration-300 shadow-[0_2px_10px_rgba(248,184,200,0.15)] hover:shadow-[0_6px_20px_rgba(248,184,200,0.3)] cursor-pointer"
+          >
+            <FiShoppingCart className="w-4 h-4 text-secondary-dark" />
+            <span>Add to Cart</span>
+          </motion.button>
+        ) : (
+          <button
+            type="button"
+            disabled
+            className="w-full py-3 px-4 rounded-2xl bg-gray-100/90 border border-gray-200 font-body text-sm font-semibold text-gray-400 flex items-center justify-center gap-2 cursor-not-allowed select-none"
+          >
+            <span>Out of Stock</span>
+          </button>
+        )}
       </div>
     </motion.div>
   );

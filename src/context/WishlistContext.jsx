@@ -6,6 +6,11 @@ import {
   subscribeWishlistService,
   normalizePrice,
 } from '../firebase/wishlistService';
+import { subscribeToProducts } from '../firebase/productService';
+import {
+  createNotification,
+  NOTIFICATION_TYPES,
+} from '../firebase/notificationService';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FiHeart, FiCheck, FiX } from 'react-icons/fi';
 
@@ -72,6 +77,64 @@ export const WishlistProvider = ({ children }) => {
     };
   }, [currentUser?.uid, authLoading]);
 
+  // Synchronize wishlisted items with live catalog changes (price updates & stock changes)
+  useEffect(() => {
+    if (!currentUser?.uid || wishlistItems.length === 0) return;
+
+    const unsubscribe = subscribeToProducts((products) => {
+      if (!Array.isArray(products) || products.length === 0) return;
+      const productMap = new Map();
+      products.forEach((p) => productMap.set(String(p.id), p));
+
+      wishlistItems.forEach(async (item) => {
+        const liveProd = productMap.get(String(item.productId));
+        if (!liveProd) return;
+
+        // Price change detection
+        if (
+          typeof liveProd.numericPrice === 'number' &&
+          typeof item.priceAtSave === 'number' &&
+          liveProd.numericPrice !== item.priceAtSave
+        ) {
+          try {
+            await createNotification(currentUser.uid, {
+              id: `wishlist_price_${item.productId}_${liveProd.numericPrice}`,
+              title: 'Wishlist Item Price Change',
+              message: `"${item.productName}" in your wishlist is now ${liveProd.price} (previously ₹${item.priceAtSave}).`,
+              type: NOTIFICATION_TYPES.WISHLIST,
+              relatedProductId: String(item.productId),
+              metadata: {
+                previousPrice: item.priceAtSave,
+                newPrice: liveProd.numericPrice,
+              },
+            });
+          } catch (e) {
+            console.warn('Wishlist price notification notice:', e);
+          }
+        }
+
+        // Out of stock detection
+        if (liveProd.available === false) {
+          try {
+            await createNotification(currentUser.uid, {
+              id: `wishlist_stock_${item.productId}_oos`,
+              title: 'Wishlist Item Out of Stock',
+              message: `"${item.productName}" in your wishlist is currently out of stock.`,
+              type: NOTIFICATION_TYPES.WISHLIST,
+              relatedProductId: String(item.productId),
+            });
+          } catch (e) {
+            console.warn('Wishlist out-of-stock notification notice:', e);
+          }
+        }
+      });
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [currentUser?.uid, wishlistItems]);
+
   // Quick lookup map: productId -> boolean
   const wishlistMap = useMemo(() => {
     const map = new Set();
@@ -126,6 +189,19 @@ export const WishlistProvider = ({ children }) => {
       try {
         await addToWishlistService(currentUser.uid, product);
         showToast(`Saved "${product.name || 'item'}" to your wishlist!`, 'success');
+
+        try {
+          await createNotification(currentUser.uid, {
+            id: `wishlist_add_${productIdStr}_${Date.now()}`,
+            title: 'Added to Wishlist',
+            message: `"${product.name || 'Gift Item'}" has been added to your personal wishlist.`,
+            type: NOTIFICATION_TYPES.WISHLIST,
+            relatedProductId: productIdStr,
+          });
+        } catch (notifErr) {
+          console.warn('Wishlist notification notice:', notifErr);
+        }
+
         return true;
       } catch (err) {
         console.error('Error adding to wishlist:', err);
@@ -161,6 +237,19 @@ export const WishlistProvider = ({ children }) => {
             : 'Item removed from your wishlist',
           'info'
         );
+
+        try {
+          await createNotification(currentUser.uid, {
+            id: `wishlist_remove_${productIdStr}_${Date.now()}`,
+            title: 'Removed from Wishlist',
+            message: `"${productName || 'Gift Item'}" was removed from your wishlist.`,
+            type: NOTIFICATION_TYPES.WISHLIST,
+            relatedProductId: productIdStr,
+          });
+        } catch (notifErr) {
+          console.warn('Wishlist removal notification notice:', notifErr);
+        }
+
         return true;
       } catch (err) {
         console.error('Error removing from wishlist:', err);

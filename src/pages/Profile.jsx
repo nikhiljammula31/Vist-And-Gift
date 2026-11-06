@@ -35,6 +35,10 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase/firebase';
 import {
+  createNotification,
+  NOTIFICATION_TYPES,
+} from '../firebase/notificationService';
+import {
   addAddressService,
   updateAddressService,
   deleteAddressService,
@@ -189,6 +193,18 @@ const Profile = () => {
         phone: phone.trim(),
         updatedAt: serverTimestamp(),
       });
+
+      // 3. Dispatch account notification
+      try {
+        await createNotification(currentUser.uid, {
+          id: `account_profile_${Date.now()}`,
+          title: 'Profile Updated',
+          message: 'Your personal profile information was successfully updated.',
+          type: NOTIFICATION_TYPES.ACCOUNT,
+        });
+      } catch (notifErr) {
+        console.warn('Profile update notification notice:', notifErr);
+      }
 
       setProfileSuccess('Profile updated successfully!');
       setTimeout(() => {

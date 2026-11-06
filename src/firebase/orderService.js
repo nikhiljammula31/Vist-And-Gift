@@ -11,6 +11,11 @@ import {
 } from 'firebase/firestore';
 import { auth, db } from './firebase.js';
 import { PRODUCTS } from '../data/products.js';
+import {
+  createNotification,
+  createAdminNotification,
+  NOTIFICATION_TYPES,
+} from './notificationService.js';
 
 // In-flight submission lock to prevent duplicate orders across rapid clicks or network retries
 const activeSubmissions = new Set();
@@ -166,32 +171,62 @@ export const createOrder = async ({
     // 3. Generate human-readable Order ID
     const orderId = generateOrderId();
 
-    // 4. Validate prices against authoritative catalog data & create snapshots
-    const itemSnapshots = items.map((item) => {
-      const pId = String(item.productId || item.id);
-      const catalogItem = PRODUCTS.find((p) => String(p.id) === pId);
+    // 4. Validate prices against authoritative Firestore catalog data (with static fallback) & create snapshots
+    const itemSnapshots = await Promise.all(
+      items.map(async (item) => {
+        const pId = String(item.productId || item.id);
+        let catalogItem = null;
+        let unitPrice = null;
 
-      let unitPrice;
-      if (catalogItem) {
-        unitPrice = parseFloat(String(catalogItem.price).replace(/[^0-9.]/g, ''));
-      } else if (typeof item.unitPrice === 'number' && item.unitPrice > 0) {
-        unitPrice = item.unitPrice;
-      } else {
-        unitPrice = parseFloat(String(item.price || 0).replace(/[^0-9.]/g, '')) || 0;
-      }
+        try {
+          const prodDocRef = doc(db, 'products', pId);
+          const prodSnap = await getDoc(prodDocRef);
+          if (prodSnap.exists()) {
+            catalogItem = prodSnap.data();
+            if (catalogItem.available === false) {
+              throw new Error(
+                `"${catalogItem.name || 'Gift item'}" is currently out of stock and cannot be ordered.`
+              );
+            }
+            const rawPrice = catalogItem.price;
+            unitPrice =
+              typeof rawPrice === 'number'
+                ? rawPrice
+                : parseFloat(String(rawPrice || 0).replace(/[^0-9.]/g, ''));
+          }
+        } catch (err) {
+          if (err.message && err.message.includes('out of stock')) {
+            throw err;
+          }
+          console.warn(`Firestore price lookup for product ${pId} failed, checking fallback:`, err.message);
+        }
 
-      const quantity = Math.max(1, parseInt(item.quantity, 10) || 1);
-      const itemSubtotal = Number((unitPrice * quantity).toFixed(2));
+        // Fallback to static PRODUCTS if not found in Firestore
+        if (unitPrice === null || isNaN(unitPrice)) {
+          const fallbackItem = PRODUCTS.find((p) => String(p.id) === pId);
+          if (fallbackItem) {
+            catalogItem = fallbackItem;
+            unitPrice = parseFloat(String(fallbackItem.price).replace(/[^0-9.]/g, ''));
+          } else if (typeof item.unitPrice === 'number' && item.unitPrice > 0) {
+            unitPrice = item.unitPrice;
+          } else {
+            unitPrice = parseFloat(String(item.price || 0).replace(/[^0-9.]/g, '')) || 0;
+          }
+        }
 
-      return {
-        productId: pId,
-        productName: catalogItem?.name || item.productName || item.name || 'Gift Item',
-        image: item.image || catalogItem?.image || '',
-        unitPrice: Number(unitPrice.toFixed(2)),
-        quantity,
-        subtotal: itemSubtotal,
-      };
-    });
+        const quantity = Math.max(1, parseInt(item.quantity, 10) || 1);
+        const itemSubtotal = Number((unitPrice * quantity).toFixed(2));
+
+        return {
+          productId: pId,
+          productName: catalogItem?.name || item.productName || item.name || 'Gift Item',
+          image: catalogItem?.image || item.image || '',
+          unitPrice: Number(unitPrice.toFixed(2)),
+          quantity,
+          subtotal: itemSubtotal,
+        };
+      })
+    );
 
     // 5. Authoritatively calculate subtotal, GST (18%), and grand total in INR
     const calculatedSubtotal = Number(itemSnapshots.reduce((acc, it) => acc + it.subtotal, 0).toFixed(2));
@@ -226,6 +261,42 @@ export const createOrder = async ({
     // 7. Save to Firestore under orders/{orderId}
     const orderDocRef = doc(db, 'orders', orderId);
     await setDoc(orderDocRef, orderDoc);
+
+    // 8. Dispatch Order Notifications (Customer Confirmation + Administrator Alert)
+    try {
+      await Promise.all([
+        createNotification(userId, {
+          id: `order_${orderId}_placed`,
+          title: 'Order Placed Successfully',
+          message: `Your order #${orderId} for ₹${calculatedTotal.toLocaleString('en-IN')} has been placed successfully and is awaiting processing.`,
+          type: NOTIFICATION_TYPES.ORDER,
+          relatedOrderId: orderId,
+          metadata: {
+            orderId,
+            status: 'placed',
+            totalAmount: calculatedTotal,
+            itemsCount: itemSnapshots.length,
+          },
+        }),
+        createAdminNotification({
+          id: `admin_order_${orderId}_placed`,
+          title: 'New Customer Order Received',
+          message: `New order #${orderId} placed by ${customerDetails.fullName.trim()} for ₹${calculatedTotal.toLocaleString('en-IN')}.`,
+          type: NOTIFICATION_TYPES.ORDER,
+          relatedOrderId: orderId,
+          relatedUserId: userId,
+          metadata: {
+            orderId,
+            userId,
+            customerName: customerDetails.fullName.trim(),
+            totalAmount: calculatedTotal,
+            itemsCount: itemSnapshots.length,
+          },
+        }),
+      ]);
+    } catch (notifErr) {
+      console.warn('Order notification dispatch notice:', notifErr?.message || notifErr);
+    }
 
     return {
       success: true,
@@ -289,6 +360,30 @@ export const getOrderTimestamp = (order) => {
   }
   const parsed = new Date(order.createdAt).getTime();
   return isNaN(parsed) ? 0 : parsed;
+};
+
+/**
+ * Safely formats an order createdAt timestamp or order object into a localized date string.
+ */
+export const formatOrderDate = (orderOrDate) => {
+  if (!orderOrDate) return 'Recently';
+  let ms = 0;
+  if (typeof orderOrDate === 'object' && ('createdAt' in orderOrDate)) {
+    ms = getOrderTimestamp(orderOrDate);
+  } else if (orderOrDate.seconds) {
+    ms = orderOrDate.seconds * 1000;
+  } else if (orderOrDate.toDate && typeof orderOrDate.toDate === 'function') {
+    ms = orderOrDate.toDate().getTime();
+  } else {
+    const parsed = new Date(orderOrDate).getTime();
+    ms = isNaN(parsed) ? 0 : parsed;
+  }
+  if (!ms) return 'Recently';
+  return new Date(ms).toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
 };
 
 /**

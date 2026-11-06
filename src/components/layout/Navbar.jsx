@@ -12,23 +12,33 @@ import {
   FiX,
   FiCheckCircle,
   FiHeart,
+  FiShield,
+  FiBell,
 } from 'react-icons/fi';
 import PremiumButton from '../common/PremiumButton';
 import { useQuote } from '../../context/QuoteContext';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { useWishlist } from '../../context/WishlistContext';
+import { useNotifications } from '../../context/NotificationContext';
+import {
+  formatRelativeTime,
+  NOTIFICATION_TYPES,
+} from '../../firebase/notificationService';
 
 const Navbar = () => {
   const [scrolled, setScrolled] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [notifDropdownOpen, setNotifDropdownOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const dropdownRef = useRef(null);
+  const notifDropdownRef = useRef(null);
 
   const { openQuoteModal } = useQuote();
   const { totalItems } = useCart();
   const { wishlistCount } = useWishlist();
-  const { currentUser, userProfile, isEmailVerified, loading, logout } = useAuth();
+  const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
+  const { currentUser, userProfile, isEmailVerified, isAdmin, loading, logout } = useAuth();
   const navigate = useNavigate();
 
   // User is considered fully authenticated only when loading is complete, user exists, and email is verified
@@ -43,11 +53,14 @@ const Navbar = () => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Handle outside click for user dropdown
+  // Handle outside click for user dropdown & notifications dropdown
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setDropdownOpen(false);
+      }
+      if (notifDropdownRef.current && !notifDropdownRef.current.contains(event.target)) {
+        setNotifDropdownOpen(false);
       }
     };
 
@@ -162,6 +175,136 @@ const Navbar = () => {
                 </motion.span>
               </NavLink>
 
+              {/* Notification Bell & Dropdown */}
+              <div className="relative" ref={notifDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setNotifDropdownOpen(!notifDropdownOpen)}
+                  className="relative group text-secondary-dark hover:text-accent transition-colors p-1 cursor-pointer interactive"
+                  aria-label="Notifications"
+                >
+                  <FiBell className="w-6 h-6" />
+                  {unreadCount > 0 && (
+                    <motion.span
+                      className="absolute -top-1 -right-1 bg-accent text-white text-[10px] font-bold min-w-4 h-4 px-1 rounded-full flex items-center justify-center border-2 border-white shadow-xs"
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ type: 'spring', stiffness: 400, damping: 10 }}
+                    >
+                      {unreadCount > 9 ? '9+' : unreadCount}
+                    </motion.span>
+                  )}
+                </button>
+
+                {/* Notifications Dropdown Panel */}
+                <AnimatePresence>
+                  {notifDropdownOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                      transition={{ duration: 0.2 }}
+                      className="absolute right-0 mt-3 w-80 sm:w-96 rounded-2xl bg-white/95 backdrop-blur-xl border border-pink-200/80 shadow-[0_15px_35px_rgba(248,184,200,0.35)] py-3 z-[100] font-body"
+                    >
+                      {/* Header */}
+                      <div className="px-4 pb-2.5 border-b border-pink-100 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-heading font-bold text-sm text-secondary-dark">Notifications</span>
+                          {unreadCount > 0 && (
+                            <span className="bg-pink-100 text-accent-dark text-[10px] font-bold px-2 py-0.5 rounded-full">
+                              {unreadCount} new
+                            </span>
+                          )}
+                        </div>
+                        {unreadCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={markAllAsRead}
+                            className="text-[11px] font-semibold text-accent hover:text-accent-dark transition-colors cursor-pointer"
+                          >
+                            Mark all read
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Notification Items List */}
+                      <div className="max-h-72 overflow-y-auto divide-y divide-pink-50/80 scrollbar-none">
+                        {notifications.length === 0 ? (
+                          <div className="py-8 text-center px-4">
+                            <FiBell className="w-8 h-8 text-pink-200 mx-auto mb-2" />
+                            <p className="text-xs font-semibold text-secondary-dark">No notifications yet</p>
+                            <p className="text-[11px] text-secondary-dark/50 mt-0.5">
+                              Updates on your orders and wishlist will appear here.
+                            </p>
+                          </div>
+                        ) : (
+                          notifications.slice(0, 5).map((n) => {
+                            const isUnread = !n.isRead;
+                            return (
+                              <div
+                                key={n.id}
+                                onClick={() => {
+                                  if (isUnread) markAsRead(n.id);
+                                  setNotifDropdownOpen(false);
+                                  if (n.relatedOrderId) {
+                                    navigate(`/order/${n.relatedOrderId}`);
+                                  } else if (n.relatedProductId) {
+                                    navigate(`/product/${n.relatedProductId}`);
+                                  } else {
+                                    navigate('/notifications');
+                                  }
+                                }}
+                                className={`px-4 py-3 flex items-start gap-3 hover:bg-pink-50/50 transition-colors cursor-pointer ${
+                                  isUnread ? 'bg-pink-50/30' : ''
+                                }`}
+                              >
+                                <div className="w-8 h-8 rounded-xl bg-pink-100/70 border border-pink-200/60 flex items-center justify-center shrink-0 text-accent mt-0.5">
+                                  {n.type === NOTIFICATION_TYPES.ORDER ? (
+                                    <FiPackage className="w-4 h-4 text-amber-600" />
+                                  ) : n.type === NOTIFICATION_TYPES.WISHLIST ? (
+                                    <FiHeart className="w-4 h-4 text-accent" />
+                                  ) : (
+                                    <FiBell className="w-4 h-4 text-accent" />
+                                  )}
+                                </div>
+
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between gap-1">
+                                    <h5 className="text-xs font-bold text-secondary-dark truncate">{n.title}</h5>
+                                    <span className="text-[10px] text-secondary-dark/50 shrink-0">
+                                      {formatRelativeTime(n.createdAt)}
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-secondary-dark/70 line-clamp-2 mt-0.5 leading-snug">
+                                    {n.message}
+                                  </p>
+                                </div>
+
+                                {isUnread && (
+                                  <span className="w-2 h-2 rounded-full bg-accent shrink-0 mt-2" />
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      {/* Footer */}
+                      <div className="pt-2.5 px-4 border-t border-pink-100 flex items-center justify-center">
+                        <Link
+                          to="/notifications"
+                          onClick={() => setNotifDropdownOpen(false)}
+                          className="text-xs font-semibold text-accent hover:text-accent-dark transition-colors inline-flex items-center gap-1"
+                        >
+                          <span>View all notifications</span>
+                          <span>&rarr;</span>
+                        </Link>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
               {/* Customer Profile Icon & Dropdown */}
               <div className="relative" ref={dropdownRef}>
                 <button
@@ -214,6 +357,17 @@ const Navbar = () => {
 
                       {/* Dropdown Items */}
                       <div className="py-1">
+                        {isAdmin && (
+                          <Link
+                            to="/admin"
+                            onClick={() => setDropdownOpen(false)}
+                            className="flex items-center gap-2.5 px-4 py-2 text-xs font-semibold text-accent hover:bg-pink-50 transition-colors border-b border-pink-100/60"
+                          >
+                            <FiShield className="w-4 h-4 text-accent" />
+                            <span>Admin Portal</span>
+                          </Link>
+                        )}
+
                         <Link
                           to="/profile"
                           onClick={() => setDropdownOpen(false)}
@@ -244,6 +398,22 @@ const Navbar = () => {
                           {wishlistCount > 0 && (
                             <span className="bg-pink-100 text-accent-dark text-[10px] font-bold px-1.5 py-0.2 rounded-full">
                               {wishlistCount}
+                            </span>
+                          )}
+                        </Link>
+
+                        <Link
+                          to="/notifications"
+                          onClick={() => setDropdownOpen(false)}
+                          className="flex items-center justify-between px-4 py-2 text-xs font-medium text-secondary-dark/80 hover:text-accent hover:bg-pink-50/50 transition-colors"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <FiBell className="w-4 h-4 text-accent-dark" />
+                            <span>Notifications</span>
+                          </div>
+                          {unreadCount > 0 && (
+                            <span className="bg-accent text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full">
+                              {unreadCount}
                             </span>
                           )}
                         </Link>
@@ -288,6 +458,22 @@ const Navbar = () => {
 
         {/* Mobile Header Icons */}
         <div className="flex items-center gap-4 md:hidden">
+          {/* Notifications Icon visible ONLY when logged in */}
+          {isAuthedAndVerified && (
+            <NavLink
+              to="/notifications"
+              className="relative group text-secondary-dark hover:text-accent transition-colors p-1"
+              aria-label="Notifications"
+            >
+              <FiBell className="w-6 h-6" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-accent text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </NavLink>
+          )}
+
           {/* Cart Icon visible ONLY when logged in */}
           {isAuthedAndVerified && (
             <NavLink
@@ -346,6 +532,17 @@ const Navbar = () => {
             <div className="pt-4 border-t border-gray-100 space-y-3">
               {isAuthedAndVerified ? (
                 <>
+                  {isAdmin && (
+                    <Link
+                      to="/admin"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className="flex items-center gap-2 text-sm font-bold text-accent pb-2 border-b border-pink-100"
+                    >
+                      <FiShield className="w-4 h-4 text-accent" />
+                      <span>Admin Portal</span>
+                    </Link>
+                  )}
+
                   <Link
                     to="/profile"
                     onClick={() => setMobileMenuOpen(false)}
@@ -376,6 +573,22 @@ const Navbar = () => {
                     {wishlistCount > 0 && (
                       <span className="bg-accent text-white text-xs font-bold px-2 py-0.5 rounded-full">
                         {wishlistCount}
+                      </span>
+                    )}
+                  </Link>
+
+                  <Link
+                    to="/notifications"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="flex items-center justify-between text-sm font-semibold text-secondary-dark"
+                  >
+                    <div className="flex items-center gap-2">
+                      <FiBell className="w-4 h-4 text-accent" />
+                      <span>Notifications</span>
+                    </div>
+                    {unreadCount > 0 && (
+                      <span className="bg-accent text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                        {unreadCount}
                       </span>
                     )}
                   </Link>

@@ -18,6 +18,7 @@ import { useAuth } from '../context/AuthContext';
 import { useAuthModal } from '../context/AuthModalContext';
 import { createOrder, normalizeIndianPhone } from '../firebase/orderService';
 import { getUserAddressesService } from '../firebase/addressService';
+import { getProductById } from '../services/productService';
 import PremiumButton from '../components/common/PremiumButton';
 
 const CHECKOUT_STORAGE_KEY = 'visit_and_gift_checkout_form';
@@ -205,6 +206,16 @@ const Cart = () => {
     setOrderError(null);
 
     try {
+      // 4.5. Revalidate product availability in real-time before order submission
+      for (const item of cartItems) {
+        const liveProd = await getProductById(item.id || item.productId);
+        if (liveProd && liveProd.available === false) {
+          throw new Error(
+            `"${liveProd.name || item.name}" is currently out of stock. Please remove it from your cart before proceeding.`
+          );
+        }
+      }
+
       // 5. Create order in Firestore (simplified order placement, no payment step)
       const result = await createOrder({
         userId: currentUser.uid,
@@ -394,7 +405,7 @@ const Cart = () => {
                     </label>
                     <input
                       type="email"
-                      placeholder="e.g. priya@example.com"
+                      placeholder="Enter your email address"
                       value={formData.email}
                       onChange={(e) => handleInputChange('email', e.target.value)}
                       className={`w-full px-4 py-2.5 rounded-xl border bg-white/70 text-sm font-body text-secondary-dark focus:outline-none focus:ring-2 focus:ring-accent/40 ${

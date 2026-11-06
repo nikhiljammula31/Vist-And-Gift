@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { NavLink } from 'react-router-dom';
-import { FiFacebook, FiInstagram, FiLinkedin, FiMapPin, FiPhone, FiMail, FiClock } from 'react-icons/fi';
+import { FiFacebook, FiInstagram, FiLinkedin, FiMapPin, FiPhone, FiMail, FiClock, FiShield } from 'react-icons/fi';
 import { FaWhatsapp, FaTwitter } from 'react-icons/fa';
 import PremiumButton from '../common/PremiumButton';
 
@@ -189,13 +189,21 @@ const Footer = () => {
         {/* Footer Bottom */}
         <motion.div variants={columnVariants} className="border-t border-secondary-dark/10 pt-8 flex flex-col md:flex-row justify-between items-center text-gray-500 font-body text-sm gap-4">
           <p>© 2026 Visit & Gift. All Rights Reserved.</p>
-          <div className="flex gap-6">
+          <div className="flex flex-wrap items-center gap-6">
             {['Privacy Policy', 'Terms & Conditions', 'Return Policy'].map((link) => (
               <a key={link} href="#" className="relative inline-flex hover:text-accent transition-colors duration-300 group interactive">
                 {link}
                 <span className="absolute left-0 bottom-[-2px] w-0 h-[1px] bg-accent transition-all duration-300 group-hover:w-full"></span>
               </a>
             ))}
+            <NavLink
+              to="/login?mode=admin"
+              className="relative inline-flex items-center gap-1.5 text-xs text-gray-400 hover:text-accent transition-colors duration-300 group interactive"
+              title="Staff & Administrator Portal"
+            >
+              <FiShield className="w-3.5 h-3.5 text-gray-400 group-hover:text-accent transition-colors" />
+              <span>Admin Access</span>
+            </NavLink>
           </div>
         </motion.div>
       </div>

@@ -1,8 +1,10 @@
 import React, { Suspense } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/layout/Layout';
 import AppBackground from './components/common/AppBackground';
 import ProtectedRoute from './components/auth/ProtectedRoute';
+import AdminRoute from './components/admin/AdminRoute';
+import AdminLayout from './components/admin/AdminLayout';
 
 // Lazy load pages
 const Home = React.lazy(() => import('./pages/Home'));
@@ -20,6 +22,13 @@ const MyOrders = React.lazy(() => import('./pages/MyOrders'));
 const OrderDetail = React.lazy(() => import('./pages/OrderDetail'));
 const ProductDetail = React.lazy(() => import('./pages/ProductDetail'));
 const Wishlist = React.lazy(() => import('./pages/Wishlist'));
+const Notifications = React.lazy(() => import('./pages/Notifications'));
+
+// Admin Dashboard Pages (Phase 5)
+const AdminDashboard = React.lazy(() => import('./pages/admin/AdminDashboard'));
+const AdminOrders = React.lazy(() => import('./pages/admin/AdminOrders'));
+const AdminCustomers = React.lazy(() => import('./pages/admin/AdminCustomers'));
+const AdminProducts = React.lazy(() => import('./pages/admin/AdminProducts'));
 
 // Premium loading fallback for suspense
 const PageLoader = () => (
@@ -77,6 +86,14 @@ function App() {
               }
             />
             <Route
+              path="notifications"
+              element={
+                <ProtectedRoute requireVerified={true}>
+                  <Notifications />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="my-orders"
               element={
                 <ProtectedRoute requireVerified={true}>
@@ -100,6 +117,24 @@ function App() {
                 </ProtectedRoute>
               }
             />
+          </Route>
+
+          {/* Redirect /admin/login to unified /login?mode=admin */}
+          <Route path="admin/login" element={<Navigate to="/login?mode=admin" replace />} />
+
+          {/* Admin Dashboard Protected Routes (Phase 5) */}
+          <Route
+            path="admin"
+            element={
+              <AdminRoute>
+                <AdminLayout />
+              </AdminRoute>
+            }
+          >
+            <Route index element={<AdminDashboard />} />
+            <Route path="orders" element={<AdminOrders />} />
+            <Route path="customers" element={<AdminCustomers />} />
+            <Route path="products" element={<AdminProducts />} />
           </Route>
         </Routes>
       </Suspense>

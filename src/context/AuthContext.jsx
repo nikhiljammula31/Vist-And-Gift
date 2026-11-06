@@ -22,6 +22,11 @@ import {
 } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebase';
 import { ensureUserProfile } from '../firebase/userService';
+import {
+  createNotification,
+  createAdminNotification,
+  NOTIFICATION_TYPES,
+} from '../firebase/notificationService';
 
 const AuthContext = createContext(null);
 
@@ -38,7 +43,14 @@ export const AuthProvider = ({ children }) => {
   const [userProfile, setUserProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isEmailVerified, setIsEmailVerified] = useState(false);
+  const [isAdminClaim, setIsAdminClaim] = useState(false);
   const profileListenerRef = useRef(null);
+
+  // Derive administrative status strictly from trusted custom claims or trusted Firestore role
+  const isAdmin = useMemo(() => {
+    if (loading || !currentUser) return false;
+    return Boolean(isAdminClaim || userProfile?.role === 'admin');
+  }, [loading, currentUser, isAdminClaim, userProfile?.role]);
 
   // Sync with Firebase Auth state
   useEffect(() => {
@@ -51,6 +63,13 @@ export const AuthProvider = ({ children }) => {
       if (user) {
         setCurrentUser(user);
         setIsEmailVerified(Boolean(user.emailVerified));
+
+        // Check for trusted custom admin claims from Firebase Auth token
+        user.getIdTokenResult().then((tokenResult) => {
+          setIsAdminClaim(Boolean(tokenResult?.claims?.admin));
+        }).catch(() => {
+          setIsAdminClaim(false);
+        });
 
         // Realtime Firestore profile listener
         const userDocRef = doc(db, 'users', user.uid);
@@ -108,6 +127,7 @@ export const AuthProvider = ({ children }) => {
         setCurrentUser(null);
         setUserProfile(null);
         setIsEmailVerified(false);
+        setIsAdminClaim(false);
         setLoading(false);
       }
     });
@@ -177,7 +197,33 @@ export const AuthProvider = ({ children }) => {
       console.warn('Email verification dispatch notice:', verifErr.message);
     }
 
-    // 4. Update local state
+    // 4. Dispatch Welcome & Registration Notifications
+    try {
+      await Promise.all([
+        createNotification(user.uid, {
+          id: `account_welcome_${user.uid}`,
+          title: 'Welcome to Visit & Gift!',
+          message: `Welcome, ${fullName?.trim() || 'valued customer'}! Thank you for joining Visit & Gift. Explore our bespoke handcrafted gifts and custom presents.`,
+          type: NOTIFICATION_TYPES.ACCOUNT,
+        }),
+        createAdminNotification({
+          id: `admin_user_${user.uid}`,
+          title: 'New Customer Registered',
+          message: `${fullName?.trim() || 'New Customer'} (${email.trim()}) registered an account.`,
+          type: NOTIFICATION_TYPES.ACCOUNT,
+          relatedUserId: user.uid,
+          metadata: {
+            userId: user.uid,
+            email: email.trim(),
+            fullName: fullName?.trim() || 'Customer',
+          },
+        }),
+      ]);
+    } catch (notifErr) {
+      console.warn('Welcome notification notice:', notifErr?.message || notifErr);
+    }
+
+    // 5. Update local state
     setCurrentUser(user);
     setUserProfile(profile);
     setIsEmailVerified(Boolean(user.emailVerified));
@@ -252,6 +298,12 @@ export const AuthProvider = ({ children }) => {
           },
           { merge: true }
         );
+        await createNotification(auth.currentUser.uid, {
+          id: `account_verified_${auth.currentUser.uid}`,
+          title: 'Email Verified Successfully',
+          message: 'Your email address has been verified. You now have full access to your account and orders.',
+          type: NOTIFICATION_TYPES.ACCOUNT,
+        });
       } catch (err) {
         console.warn('Could not sync verification to Firestore:', err);
       }
@@ -272,6 +324,7 @@ export const AuthProvider = ({ children }) => {
     setCurrentUser(null);
     setUserProfile(null);
     setIsEmailVerified(false);
+    setIsAdminClaim(false);
   };
 
   const value = useMemo(
@@ -280,6 +333,7 @@ export const AuthProvider = ({ children }) => {
       userProfile,
       loading,
       isEmailVerified,
+      isAdmin,
       login,
       signup,
       loginWithGoogle,
@@ -288,7 +342,7 @@ export const AuthProvider = ({ children }) => {
       resendVerificationEmail,
       checkEmailVerification,
     }),
-    [currentUser, userProfile, loading, isEmailVerified]
+    [currentUser, userProfile, loading, isEmailVerified, isAdmin]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -13,7 +13,8 @@ import {
   FiHeart,
 } from 'react-icons/fi';
 import clsx from 'clsx';
-import { PRODUCTS } from '../data/products';
+import { PRODUCTS as STATIC_PRODUCTS } from '../data/products';
+import { subscribeToProduct, normalizeProductPrice, formatProductPrice } from '../services/productService';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import { useAuthModal } from '../context/AuthModalContext';
@@ -29,10 +30,38 @@ const ProductDetail = () => {
 
   const [added, setAdded] = useState(false);
 
-  const product = PRODUCTS.find((p) => String(p.id) === String(productId)) || PRODUCTS[0];
+  const [product, setProduct] = useState(() => {
+    const fallback =
+      STATIC_PRODUCTS.find((p) => String(p.id) === String(productId)) ||
+      STATIC_PRODUCTS[0];
+    return {
+      ...fallback,
+      price: formatProductPrice(fallback.price),
+      numericPrice: normalizeProductPrice(fallback.price),
+    };
+  });
+
+  useEffect(() => {
+    if (!productId) return;
+    const unsubscribe = subscribeToProduct(
+      productId,
+      (liveProduct) => {
+        if (liveProduct) {
+          setProduct(liveProduct);
+        }
+      },
+      (err) => {
+        console.warn(`Could not subscribe to product ${productId}:`, err.message);
+      }
+    );
+    return () => unsubscribe();
+  }, [productId]);
+
   const isSaved = isInWishlist(product.id);
+  const isAvailable = product.available !== false;
 
   const handleAddToCart = () => {
+    if (!isAvailable) return;
     if (!currentUser) {
       openAuthModal({
         title: 'Sign in to continue!',
@@ -45,6 +74,7 @@ const ProductDetail = () => {
             name: product.name,
             price: product.price,
             image: product.image,
+            available: isAvailable,
           },
         },
         redirectTo: `/product/${product.id}`,
@@ -57,6 +87,7 @@ const ProductDetail = () => {
       name: product.name,
       price: product.price,
       image: product.image,
+      available: isAvailable,
     });
     setAdded(true);
     setTimeout(() => setAdded(false), 2000);
@@ -156,10 +187,21 @@ const ProductDetail = () => {
                 {product.name}
               </h1>
 
-              {/* Rating and Price */}
+              {/* Rating, Price, and Availability */}
               <div className="flex flex-wrap items-center justify-between gap-4 mt-3 pb-6 border-b border-gray-200/80">
-                <div className="text-3xl font-body font-bold text-accent">
-                  {product.price}
+                <div className="flex items-center gap-4">
+                  <div className="text-3xl font-body font-bold text-accent">
+                    {product.price}
+                  </div>
+                  {isAvailable ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
+                      <FiCheckCircle className="w-3.5 h-3.5" /> In Stock &amp; Ready to Ship
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-700 bg-red-50 px-3 py-1 rounded-full border border-red-200">
+                      Out of Stock
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-1.5 bg-yellow-50/80 border border-yellow-200/60 py-1 px-3 rounded-full text-xs font-body font-semibold text-yellow-700">
@@ -232,25 +274,35 @@ const ProductDetail = () => {
             {/* Add to Cart & Wishlist CTA */}
             <div className="pt-4 space-y-3">
               <div className="flex items-center gap-3">
-                <motion.button
-                  type="button"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={handleAddToCart}
-                  className="flex-1 py-4 px-8 rounded-2xl bg-gradient-to-r from-accent via-accent-dark to-accent text-white font-body font-semibold text-base shadow-[0_10px_25px_rgba(248,184,200,0.5)] hover:shadow-[0_14px_32px_rgba(248,184,200,0.7)] flex items-center justify-center gap-2.5 transition-all cursor-pointer"
-                >
-                  {added ? (
-                    <>
-                      <FiCheckCircle className="w-5 h-5 text-white" />
-                      <span>Added to Cart!</span>
-                    </>
-                  ) : (
-                    <>
-                      <FiShoppingCart className="w-5 h-5" />
-                      <span>Add to Cart • {product.price}</span>
-                    </>
-                  )}
-                </motion.button>
+                {isAvailable ? (
+                  <motion.button
+                    type="button"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleAddToCart}
+                    className="flex-1 py-4 px-8 rounded-2xl bg-gradient-to-r from-accent via-accent-dark to-accent text-white font-body font-semibold text-base shadow-[0_10px_25px_rgba(248,184,200,0.5)] hover:shadow-[0_14px_32px_rgba(248,184,200,0.7)] flex items-center justify-center gap-2.5 transition-all cursor-pointer"
+                  >
+                    {added ? (
+                      <>
+                        <FiCheckCircle className="w-5 h-5 text-white" />
+                        <span>Added to Cart!</span>
+                      </>
+                    ) : (
+                      <>
+                        <FiShoppingCart className="w-5 h-5" />
+                        <span>Add to Cart • {product.price}</span>
+                      </>
+                    )}
+                  </motion.button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    className="flex-1 py-4 px-8 rounded-2xl bg-gray-100 border border-gray-200 text-gray-400 font-body font-semibold text-base flex items-center justify-center gap-2.5 cursor-not-allowed select-none"
+                  >
+                    <span>Currently Out of Stock</span>
+                  </button>
+                )}
 
                 {/* Account-Only Wishlist Control: Visible ONLY for Logged-In Users */}
                 {currentUser && (

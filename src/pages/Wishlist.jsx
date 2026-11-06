@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -12,7 +12,8 @@ import {
 } from 'react-icons/fi';
 import { useWishlist } from '../context/WishlistContext';
 import { useCart } from '../context/CartContext';
-import { PRODUCTS } from '../data/products';
+import { PRODUCTS as STATIC_PRODUCTS } from '../data/products';
+import { subscribeToProducts } from '../services/productService';
 import PremiumButton from '../components/common/PremiumButton';
 
 const Wishlist = () => {
@@ -22,12 +23,22 @@ const Wishlist = () => {
 
   // Track recently added item IDs for animated CTA feedback
   const [addedItems, setAddedItems] = useState({});
+  const [catalogProducts, setCatalogProducts] = useState(STATIC_PRODUCTS);
 
-  // Merge saved wishlist snapshots with authoritative PRODUCTS catalogue
+  useEffect(() => {
+    const unsubscribe = subscribeToProducts((items) => {
+      if (items && items.length > 0) {
+        setCatalogProducts(items);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Merge saved wishlist snapshots with live Firestore catalogue
   const enrichedItems = useMemo(() => {
     return wishlistItems.map((item) => {
-      const numId = Number(item.productId);
-      const matched = PRODUCTS.find((p) => p.id === numId);
+      const strId = String(item.productId);
+      const matched = catalogProducts.find((p) => String(p.id) === strId);
 
       if (matched) {
         return {
@@ -40,7 +51,7 @@ const Wishlist = () => {
 
       // Fallback for custom or legacy items
       return {
-        id: isNaN(numId) ? item.productId : numId,
+        id: strId,
         wishlistDocId: item.id,
         name: item.productName || 'Custom Gift',
         image: item.productImage || 'https://images.unsplash.com/photo-1514228742587-6b1558fcca3d?q=80&w=600&auto=format&fit=crop',
@@ -52,7 +63,7 @@ const Wishlist = () => {
         savedPrice: item.priceAtSave,
       };
     });
-  }, [wishlistItems]);
+  }, [wishlistItems, catalogProducts]);
 
   const handleAddToCart = (product) => {
     addToCart({

@@ -1,14 +1,53 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FiFilter, FiSearch, FiX } from 'react-icons/fi';
 import ProductCard from '../components/ui/ProductCard';
-import { CATEGORIES, PRODUCTS } from '../data/products';
+import {
+  subscribeToProducts,
+  subscribeToCategories,
+  CATEGORIES as DEFAULT_CATEGORIES,
+} from '../services/productService';
+import { PRODUCTS as STATIC_PRODUCTS } from '../data/products';
 
 const Shop = () => {
+  const [products, setProducts] = useState(STATIC_PRODUCTS);
+  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [loading, setLoading] = useState(true);
   const [activeCategory, setActiveCategory] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const filteredProducts = PRODUCTS.filter((p) => {
+  useEffect(() => {
+    const unsubProds = subscribeToProducts(
+      (items) => {
+        if (items && items.length > 0) {
+          setProducts(items);
+        }
+        setLoading(false);
+      },
+      (err) => {
+        console.warn('Could not subscribe to Firestore products in Shop:', err.message);
+        setLoading(false);
+      }
+    );
+
+    const unsubCats = subscribeToCategories(
+      (cats) => {
+        if (cats && cats.length > 0) {
+          setCategories(cats);
+        }
+      },
+      (err) => {
+        console.warn('Could not subscribe to dynamic categories in Shop:', err.message);
+      }
+    );
+
+    return () => {
+      unsubProds();
+      unsubCats();
+    };
+  }, []);
+
+  const filteredProducts = products.filter((p) => {
     const matchesCategory = activeCategory === "All" || p.category === activeCategory;
     const matchesSearch =
       !searchQuery.trim() ||
@@ -92,7 +131,7 @@ const Shop = () => {
                 </div>
 
                 <ul className="space-y-2">
-                  {CATEGORIES.map((category) => (
+                  {categories.map((category) => (
                     <li key={category}>
                       <button
                         onClick={() => setActiveCategory(category)}
@@ -121,31 +160,48 @@ const Shop = () => {
                 </span>
               </div>
 
-              <motion.div
-                layout
-                className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 sm:gap-7 items-stretch"
-              >
-                <AnimatePresence mode="popLayout">
-                  {filteredProducts.map((product, index) => (
-                    <motion.div
-                      key={product.id}
-                      layout
-                      initial={{ opacity: 0, scale: 0.9, y: 30 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.9, y: -30 }}
-                      transition={{
-                        type: "spring",
-                        bounce: 0.25,
-                        duration: 0.5,
-                        delay: Math.min(index * 0.06, 0.3),
-                      }}
-                      className="h-full"
+              {loading && products.length === 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 sm:gap-7 items-stretch">
+                  {[...Array(6)].map((_, i) => (
+                    <div
+                      key={i}
+                      className="rounded-[30px] p-5 bg-white border border-pink-100 shadow-xs h-80 animate-pulse flex flex-col justify-between"
                     >
-                      <ProductCard {...product} />
-                    </motion.div>
+                      <div className="w-full h-48 bg-pink-50/70 rounded-[20px]" />
+                      <div className="space-y-2 pt-3">
+                        <div className="h-4 bg-gray-100 rounded w-2/3" />
+                        <div className="h-4 bg-pink-100 rounded w-1/3" />
+                      </div>
+                    </div>
                   ))}
-                </AnimatePresence>
-              </motion.div>
+                </div>
+              ) : (
+                <motion.div
+                  layout
+                  className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 sm:gap-7 items-stretch"
+                >
+                  <AnimatePresence mode="popLayout">
+                    {filteredProducts.map((product, index) => (
+                      <motion.div
+                        key={product.id}
+                        layout
+                        initial={{ opacity: 0, scale: 0.9, y: 30 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.9, y: -30 }}
+                        transition={{
+                          type: "spring",
+                          bounce: 0.25,
+                          duration: 0.5,
+                          delay: Math.min(index * 0.06, 0.3),
+                        }}
+                        className="h-full"
+                      >
+                        <ProductCard {...product} />
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </motion.div>
+              )}
 
               {filteredProducts.length === 0 && (
                 <div className="text-center py-20 px-6 rounded-3xl bg-white/60 border border-pink-100/60 my-6">

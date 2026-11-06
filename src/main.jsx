@@ -8,6 +8,7 @@ import { AuthModalProvider } from './context/AuthModalContext';
 import { QuoteProvider } from './context/QuoteContext';
 import { CartProvider } from './context/CartContext';
 import { WishlistProvider } from './context/WishlistContext';
+import { NotificationProvider } from './context/NotificationContext';
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -17,7 +18,9 @@ createRoot(document.getElementById('root')).render(
           <QuoteProvider>
             <CartProvider>
               <WishlistProvider>
-                <App />
+                <NotificationProvider>
+                  <App />
+                </NotificationProvider>
               </WishlistProvider>
             </CartProvider>
           </QuoteProvider>

@@ -270,7 +270,7 @@ const Signup = () => {
               label="Email Address"
               name="email"
               type="email"
-              placeholder="aditi@example.com"
+              placeholder="Enter your email address"
               value={formData.email}
               onChange={handleChange}
               error={errors.email}

@@ -15,7 +15,7 @@ service cloud.firestore {
     //   - phone: string | null (optional)
     //   - photoURL: string | null (optional)
     //   - provider: string (required, 'password' | 'google')
-    //   - role: string (required, 'customer', immutable)
+    //   - role: string (required, 'customer' or 'admin', customer cannot self-elevate)
     //   - emailVerified: bool (required, matches auth token)
     //   - createdAt: timestamp (required, immutable)
     //   - updatedAt: timestamp (required)
@@ -41,7 +41,7 @@ service cloud.firestore {
     // Fields:
     //   - productId: string (required, 1-100 chars, equals productId document ID)
     //   - productName: string (required, 1-200 chars)
-    //   - productImage: string (required, 0-2500 chars)
+    //   - productImage: string (required, 0-500000 chars)
     //   - priceAtSave: number (required, >= 0, <= 10,000,000)
     //   - addedAt: timestamp (required)
     //   - category: string (optional, 0-100 chars)
@@ -57,9 +57,66 @@ service cloud.firestore {
     //   - totalAmount: number (required, > 0, <= 10,000,000)
     //   - customerDetails: map (required, keys: fullName [2-100 chars], email [5-100 chars], phone [10-15 chars])
     //   - shippingAddress: map (required, keys: addressLine [5-250 chars], city [2-100 chars], state [2-100 chars], pincode [4-10 chars])
-    //   - orderStatus: string (required, strictly 'placed' on client creation)
+    //   - orderStatus: string (required, strictly 'placed' on client creation; admin can update to processing/shipped/delivered/cancelled)
     //   - createdAt: timestamp (required, immutable)
     //   - updatedAt: timestamp (required)
+    //
+    // Collection: products/{productId}
+    // Document ID: productId (string)
+    // Fields:
+    //   - id: string (required, 1-100 chars)
+    //   - name: string (required, 1-200 chars)
+    //   - price: number | string (required, number >= 0 or formatted string <= 50 chars)
+    //   - category: string (required, 1-100 chars)
+    //   - description: string (optional, 0-5000 chars)
+    //   - image: string (optional, 0-500000 chars)
+    //   - rating: number (optional, 0-5)
+    //   - reviews: number (optional, >= 0)
+    //   - inStock: bool (optional)
+    //   - featured: bool (optional)
+    //   - features: list (optional, <= 50 items)
+    //   - specifications: map (optional)
+    //   - available: bool (optional)
+    //   - createdAt: timestamp (optional)
+    //   - updatedAt: timestamp (optional)
+    //
+    // Collection: categories/{categoryId}
+    // Document ID: categoryId (string)
+    // Fields:
+    //   - name: string (required, 1-100 chars)
+    //   - id: string (optional, 1-100 chars)
+    //   - createdAt: timestamp (optional)
+    //   - updatedAt: timestamp (optional)
+    //
+    // Collection: users/{userId}/notifications/{notificationId}
+    // Document ID: notificationId (matches id field)
+    // Fields:
+    //   - id: string (required, 1-128 chars, matches document ID)
+    //   - userId: string (required, equals userId)
+    //   - title: string (required, 1-200 chars)
+    //   - message: string (required, 1-1000 chars)
+    //   - type: string (required, 'order' | 'account' | 'wishlist' | 'system')
+    //   - relatedOrderId: string (optional, 1-64 chars)
+    //   - relatedProductId: string (optional, 1-100 chars)
+    //   - isRead: bool (required)
+    //   - createdAt: timestamp (required, immutable)
+    //   - updatedAt: timestamp (optional)
+    //   - metadata: map (optional)
+    //
+    // Collection: adminNotifications/{notificationId}
+    // Document ID: notificationId (matches id field)
+    // Fields:
+    //   - id: string (required, 1-128 chars, matches document ID)
+    //   - title: string (required, 1-200 chars)
+    //   - message: string (required, 1-1000 chars)
+    //   - type: string (required, 'order' | 'account' | 'stock' | 'system')
+    //   - relatedOrderId: string (optional, 1-64 chars)
+    //   - relatedProductId: string (optional, 1-100 chars)
+    //   - relatedUserId: string (optional, 1-128 chars)
+    //   - isRead: bool (required)
+    //   - createdAt: timestamp (required)
+    //   - updatedAt: timestamp (optional)
+    //   - metadata: map (optional)
     //
     // ===============================================================
 
@@ -70,6 +127,14 @@ service cloud.firestore {
 
     function isOwner(uid) {
       return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.get('admin', false) == true ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
     }
 
     // Customer profile collection: users/{userId}
@@ -127,8 +192,8 @@ service cloud.firestore {
           && data.updatedAt is timestamp;
       }
 
-      // Only authenticated users can read their own profile
-      allow read: if isOwner(userId);
+      // Read allowed for account owner or administrator
+      allow read: if isOwner(userId) || isAdmin();
 
       // Only authenticated user can create their own profile with validated customer fields
       allow create: if isOwner(userId) && isValidCreate();
@@ -217,8 +282,8 @@ service cloud.firestore {
             && (!('id' in prev) || data.id == prev.id);
         }
 
-        // Only authenticated user can read their own addresses
-        allow read: if isOwner(userId);
+        // Read allowed for account owner or administrator
+        allow read: if isOwner(userId) || isAdmin();
 
         // Only authenticated user can create an address under their own profile
         allow create: if isOwner(userId) && isValidAddressCreate(addressId);
@@ -263,7 +328,7 @@ service cloud.firestore {
             && data.productName.size() >= 1
             && data.productName.size() <= 200
             && data.productImage is string
-            && data.productImage.size() <= 2500
+            && data.productImage.size() <= 500000
             && data.priceAtSave is number
             && data.priceAtSave >= 0
             && data.priceAtSave <= 10000000
@@ -295,6 +360,87 @@ service cloud.firestore {
 
         // Only authenticated user can delete their own wishlist items
         allow delete: if isOwner(userId);
+      }
+
+      // Customer notifications subcollection: users/{userId}/notifications/{notificationId}
+      match /notifications/{notificationId} {
+
+        function hasValidCustomerNotificationFields() {
+          let allowed = [
+            'id',
+            'userId',
+            'title',
+            'message',
+            'type',
+            'relatedOrderId',
+            'relatedProductId',
+            'isRead',
+            'createdAt',
+            'updatedAt',
+            'metadata'
+          ];
+          let required = [
+            'id',
+            'userId',
+            'title',
+            'message',
+            'type',
+            'isRead',
+            'createdAt'
+          ];
+          return request.resource.data.keys().hasAll(required)
+            && request.resource.data.keys().hasOnly(allowed);
+        }
+
+        function isValidCustomerNotification(notifId) {
+          let data = request.resource.data;
+          return hasValidCustomerNotificationFields()
+            && data.id is string
+            && data.id.size() >= 1
+            && data.id.size() <= 128
+            && data.id == notifId
+            && data.userId == userId
+            && data.title is string
+            && data.title.size() >= 1
+            && data.title.size() <= 200
+            && data.message is string
+            && data.message.size() >= 1
+            && data.message.size() <= 1000
+            && data.type in ['order', 'account', 'wishlist', 'system']
+            && (!('relatedOrderId' in data) || (data.relatedOrderId is string && data.relatedOrderId.size() >= 1 && data.relatedOrderId.size() <= 64))
+            && (!('relatedProductId' in data) || (data.relatedProductId is string && data.relatedProductId.size() >= 1 && data.relatedProductId.size() <= 100))
+            && data.isRead is bool
+            && data.createdAt is timestamp
+            && (!('updatedAt' in data) || data.updatedAt is timestamp)
+            && (!('metadata' in data) || data.metadata is map);
+        }
+
+        function isValidCustomerNotificationUpdate(notifId) {
+          let data = request.resource.data;
+          let prev = resource.data;
+          return isValidCustomerNotification(notifId)
+            // Immutable fields for customer owner updates
+            && data.id == prev.id
+            && data.userId == prev.userId
+            && data.title == prev.title
+            && data.message == prev.message
+            && data.type == prev.type
+            && data.createdAt == prev.createdAt
+            && (!('relatedOrderId' in prev) || data.relatedOrderId == prev.relatedOrderId)
+            && (!('relatedProductId' in prev) || data.relatedProductId == prev.relatedProductId);
+        }
+
+        // Read: Owner or administrator can read notifications
+        allow read: if isOwner(userId) || isAdmin();
+
+        // Create: Legitimate notification creation by owner or administrator
+        allow create: if (isOwner(userId) && isValidCustomerNotification(notificationId)) || isAdmin();
+
+        // Update: Owner can mark read/update timestamp without altering notification details; admin has full update rights
+        allow update: if (isOwner(userId) && isValidCustomerNotificationUpdate(notificationId)) || isAdmin();
+
+        // Delete: Owner or administrator can delete notifications
+        allow delete: if isOwner(userId) || isAdmin();
       }
     }
 
@@ -389,17 +535,182 @@ service cloud.firestore {
           && data.updatedAt is timestamp;
       }
 
-      // READ: Allow authenticated owner to get their order or list orders matching their UID (safe for empty sets and existing docs)
-      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      function isValidAdminOrderUpdate() {
+        let data = request.resource.data;
+        let prev = resource.data;
+        return hasValidOrderFields()
+          // Critical financial and customer attributes are strictly immutable
+          && data.orderId == prev.orderId
+          && data.userId == prev.userId
+          && data.items == prev.items
+          && data.subtotal == prev.subtotal
+          && data.deliveryCharge == prev.deliveryCharge
+          && data.totalAmount == prev.totalAmount
+          && data.customerDetails == prev.customerDetails
+          && data.shippingAddress == prev.shippingAddress
+          && data.createdAt == prev.createdAt
+          // Order status must be one of the approved fulfillment statuses
+          && data.orderStatus in ['placed', 'processing', 'shipped', 'delivered', 'cancelled']
+          && data.updatedAt is timestamp;
+      }
+
+      // READ: Allow authenticated owner to get/list their own orders, or administrator to view all orders
+      allow read: if (isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid)) || isAdmin();
 
       // CREATE: Authenticated users can place orders strictly matching their UID and schema
       allow create: if isAuthenticated() && isValidOrderCreate();
 
-      // UPDATE: Clients cannot modify orders once placed (protecting orderStatus, totalAmount, userId, items)
-      allow update: if false;
+      // UPDATE: Only administrators can update order status; all financial & customer items are strictly immutable
+      allow update: if isAdmin() && isValidAdminOrderUpdate();
 
       // DELETE: Forbidden to ensure audit integrity and financial record retention
       allow delete: if false;
+    }
+
+    // Product catalog collection: products/{productId}
+    match /products/{productId} {
+
+      function isValidProduct() {
+        let data = request.resource.data;
+        let allowed = [
+          'id',
+          'productId',
+          'name',
+          'price',
+          'category',
+          'description',
+          'image',
+          'rating',
+          'reviews',
+          'inStock',
+          'featured',
+          'features',
+          'specifications',
+          'available',
+          'createdAt',
+          'updatedAt'
+        ];
+        return data.keys().hasOnly(allowed)
+          && (('id' in data && data.id is string && data.id.size() >= 1 && data.id.size() <= 100) ||
+              ('productId' in data && data.productId is string && data.productId.size() >= 1 && data.productId.size() <= 100))
+          && data.name is string
+          && data.name.size() >= 1
+          && data.name.size() <= 200
+          && ((data.price is number && data.price >= 0 && data.price <= 10000000) || (data.price is string && data.price.size() <= 50))
+          && data.category is string
+          && data.category.size() >= 1
+          && data.category.size() <= 100
+          && (!('description' in data) || (data.description is string && data.description.size() <= 5000))
+          && (!('image' in data) || (data.image is string && data.image.size() <= 500000))
+          && (!('rating' in data) || (data.rating is number && data.rating >= 0 && data.rating <= 5))
+          && (!('reviews' in data) || (data.reviews is number && data.reviews >= 0))
+          && (!('inStock' in data) || data.inStock is bool)
+          && (!('featured' in data) || data.featured is bool)
+          && (!('features' in data) || (data.features is list && data.features.size() <= 50))
+          && (!('specifications' in data) || data.specifications is map)
+          && (!('available' in data) || data.available is bool)
+          && (!('createdAt' in data) || data.createdAt is timestamp)
+          && (!('updatedAt' in data) || data.updatedAt is timestamp);
+      }
+
+      // Public read: Any customer or unauthenticated visitor can view the product catalog
+      allow read: if true;
+
+      // Admin write: Only verified administrators can add or update products
+      allow create, update: if isAdmin() && isValidProduct();
+
+      // Admin delete: Only verified administrators can remove products from the catalog
+      allow delete: if isAdmin();
+    }
+
+    // Dynamic categories collection: categories/{categoryId}
+    match /categories/{categoryId} {
+
+      function isValidCategory() {
+        let data = request.resource.data;
+        let allowed = ['id', 'name', 'createdAt', 'updatedAt'];
+        return data.keys().hasOnly(allowed)
+          && data.name is string
+          && data.name.size() >= 1
+          && data.name.size() <= 100
+          && (!('id' in data) || (data.id is string && data.id.size() >= 1 && data.id.size() <= 100))
+          && (!('createdAt' in data) || data.createdAt is timestamp)
+          && (!('updatedAt' in data) || data.updatedAt is timestamp);
+      }
+
+      // Public read: All customers and visitors can view available categories
+      allow read: if true;
+
+      // Admin write: Only verified administrators can add or update categories
+      allow create, update: if isAdmin() && isValidCategory();
+
+      // Admin delete: Only verified administrators can remove categories
+      allow delete: if isAdmin();
+    }
+
+    // Administrator notifications collection: adminNotifications/{notificationId}
+    match /adminNotifications/{notificationId} {
+
+      function hasValidAdminNotificationFields() {
+        let allowed = [
+          'id',
+          'title',
+          'message',
+          'type',
+          'relatedOrderId',
+          'relatedProductId',
+          'relatedUserId',
+          'isRead',
+          'createdAt',
+          'updatedAt',
+          'metadata'
+        ];
+        let required = [
+          'id',
+          'title',
+          'message',
+          'type',
+          'isRead',
+          'createdAt'
+        ];
+        return request.resource.data.keys().hasAll(required)
+          && request.resource.data.keys().hasOnly(allowed);
+      }
+
+      function isValidAdminNotification(notifId) {
+        let data = request.resource.data;
+        return hasValidAdminNotificationFields()
+          && data.id is string
+          && data.id.size() >= 1
+          && data.id.size() <= 128
+          && data.id == notifId
+          && data.title is string
+          && data.title.size() >= 1
+          && data.title.size() <= 200
+          && data.message is string
+          && data.message.size() >= 1
+          && data.message.size() <= 1000
+          && data.type in ['order', 'account', 'stock', 'system']
+          && (!('relatedOrderId' in data) || (data.relatedOrderId is string && data.relatedOrderId.size() >= 1 && data.relatedOrderId.size() <= 64))
+          && (!('relatedProductId' in data) || (data.relatedProductId is string && data.relatedProductId.size() >= 1 && data.relatedProductId.size() <= 100))
+          && (!('relatedUserId' in data) || (data.relatedUserId is string && data.relatedUserId.size() >= 1 && data.relatedUserId.size() <= 128))
+          && data.isRead is bool
+          && data.createdAt is timestamp
+          && (!('updatedAt' in data) || data.updatedAt is timestamp)
+          && (!('metadata' in data) || data.metadata is map);
+      }
+
+      // Read: Only administrators can view management alerts
+      allow read: if isAdmin();
+
+      // Create: Authenticated users can dispatch management notifications on order placement or registration; admin has full rights
+      allow create: if (isAuthenticated() && isValidAdminNotification(notificationId)) || isAdmin();
+
+      // Update: Only administrators can update admin notifications
+      allow update: if isAdmin();
+
+      // Delete: Only administrators can remove admin notifications
+      allow delete: if isAdmin();
     }
 
     // Default deny for all other collections
